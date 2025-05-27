@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 import json
 import sys
+from datetime import datetime
+
 
 # Connect to server
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,16 +65,10 @@ def send_message():
             client.close()
             chat.quit()
             return
-        full_message = f"{username}: {message}"
-        client.send(full_message.encode())
-
-        # Display your own message instantly
-        text_area.config(state='normal')
-        text_area.insert(tk.END, full_message + "\n")
-        text_area.config(state='disabled')
-        text_area.yview(tk.END)
         
-        input_area.delete(0, tk.END)
+        client.send(message.encode())  # Just send raw message
+        input_area.delete(0, tk.END)   # Clear input field
+
 
 # Function to receive messages
 def receive_messages():

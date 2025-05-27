@@ -3,6 +3,7 @@ import threading
 import sqlite3
 import json
 import time
+from datetime import datetime
 
 # Setup SQLite connection
 conn = sqlite3.connect('users.db', check_same_thread=False)
@@ -18,13 +19,15 @@ server.listen()
 print("[*] Server listening on the port 5555 ....")
 
 clients = []
+clients_lock = threading.Lock()
 
 def handle_client(client_socket, addr):
     username = handle_auth(client_socket)
     if not username:
         client_socket.close()
         return
-    clients.append(client_socket)
+    with clients_lock:
+         clients.append(client_socket)
     print(f"[+] New connection from {addr}")
 
     while True:
@@ -33,19 +36,24 @@ def handle_client(client_socket, addr):
             if not message: 
                 break
 
-            print(f"[{addr}] {message}")
-            broadcast(message, client_socket)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            formatted_message = f"[{timestamp}] {username} : {message}"
+            print(f"[{addr}] {formatted_message}")
+            broadcast(formatted_message, client_socket)
         except:
             break
     print(f"[-] Connection closed from {addr}")
     clients.remove(client_socket)
     client_socket.close()
 
-
-def broadcast(message, sender_socket):
-    for client in clients:
-        if client != sender_socket:
-            client.send(message.encode('utf-8'))
+def broadcast(formatted_message, sender_socket=None):
+    with clients_lock:
+        for client in clients[:]:
+            try:
+                client.send(formatted_message.encode('utf-8'))
+            except:
+                clients.remove(client)
+                client.close()
 
 
 def handle_auth(client_socket):
