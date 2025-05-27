@@ -1,6 +1,12 @@
 import socket
 import threading
+import sqlite3
+import json
+import time
 
+# Setup SQLite connection
+conn = sqlite3.connect('users.db', check_same_thread=False)
+cursor = conn.cursor()
 # Creating a server object
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -14,6 +20,11 @@ print("[*] Server listening on the port 5555 ....")
 clients = []
 
 def handle_client(client_socket, addr):
+    username = handle_auth(client_socket)
+    if not username:
+        client_socket.close()
+        return
+    clients.append(client_socket)
     print(f"[+] New connection from {addr}")
 
     while True:
@@ -36,10 +47,74 @@ def broadcast(message, sender_socket):
         if client != sender_socket:
             client.send(message.encode('utf-8'))
 
+
+def handle_auth(client_socket):
+    try:
+        data = client_socket.recv(1024).decode('utf-8')
+        credentials = json.loads(data)
+        action = credentials['action']
+        username = credentials['username']
+        password = credentials['password']
+
+        if action == 'register':
+            cursor.execute("SELECT * FROM users WHERE username =?", (username,))
+            if cursor.fetchone():
+                client_socket.send("Username already exists".encode())
+                return None
+            cursor.execute("INSERT INTO users (username,password) VALUES (?,?)", (username, password))
+            conn.commit()
+            client_socket.send(f"✅Registered as {username}".encode())
+            return username
+        
+        elif action == 'login':
+            cursor.execute("SELECT * FROM users WHERE username =? AND password =?",(username,password))
+            if cursor.fetchone():
+                client_socket.send(f"✅ Logged in as {username}".encode())
+                return username
+            else:
+                client_socket.send("Invalid credentials".encode())
+                return None
+        else:
+            client_socket.send("Invalid action".encode())
+            return None
+    except Exception as e:
+        print("Auth error", e)
+        try:
+            client_socket.send("Auth Error".encode())
+        except:
+            pass
+        return None
+            
+
+
+
 # Main Server Loop
 
-while True:
-    client_socket, addr = server.accept()
-    clients.append(client_socket)
-    thread = threading.Thread(target=handle_client, args=(client_socket, addr))
-    thread.start()
+running = True
+server.settimeout(1.0)  # Timeout every 1 second on accept()
+
+try:
+    while running:
+        try:
+            client_socket, addr = server.accept()
+        except socket.timeout:
+            # Just a timeout to allow loop to check running flag
+            continue
+        
+        thread = threading.Thread(target=handle_client, args=(client_socket, addr))
+        thread.start()
+
+except KeyboardInterrupt:
+    print("\n[!] Server is shutting down...")
+    running = False
+
+# Clean up after exiting the loop
+for client in clients:
+    try:
+        client.send("Server is shutting down.".encode())
+        client.close()
+    except:
+        pass
+
+server.close()
+print("[*] Server closed cleanly.")
