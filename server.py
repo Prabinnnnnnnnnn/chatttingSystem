@@ -18,7 +18,7 @@ server.bind(('0.0.0.0', 5555))
 server.listen()
 print("[*] Server listening on the port 5555 ....")
 
-clients = []
+clients = {}
 clients_lock = threading.Lock()
 
 def handle_client(client_socket, addr):
@@ -27,33 +27,66 @@ def handle_client(client_socket, addr):
         client_socket.close()
         return
     with clients_lock:
-         clients.append(client_socket)
+         clients[client_socket] = username
     print(f"[+] New connection from {addr}")
+    send_user_list(client_socket)
+    broadcast_message(f"🟢 {username} joined the chat", exclude_client=client_socket)
+    broadcast_user_list()
 
     while True:
         try:
             message = client_socket.recv(1024).decode('utf-8')
-            if not message: 
+            if not message or message.strip() == "/quit": 
                 break
 
+            if message.strip == "/users":
+                continue
+
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            formatted_message = f"[{timestamp}] {username} : {message}"
+            formatted_message = f"[{timestamp}] {username}: {message}"
             print(f"[{addr}] {formatted_message}")
-            broadcast(formatted_message, client_socket)
+            broadcast_message(formatted_message, exclude_client=None) 
         except:
             break
     print(f"[-] Connection closed from {addr}")
-    clients.remove(client_socket)
-    client_socket.close()
-
-def broadcast(formatted_message, sender_socket=None):
     with clients_lock:
-        for client in clients[:]:
+        if client_socket in clients:
+            del clients[client_socket]
+    client_socket.close()
+    broadcast_message(f"🔴 {username} left the chat")
+    broadcast_user_list()
+
+def broadcast_message(message, exclude_client=None):
+    with clients_lock:
+        for client in list(clients.keys()):
+            if client != exclude_client:
+                try:
+                    client.send(f"{message}\n".encode('utf-8'))  # Ensure newline
+                except:
+                    del clients[client]
+                    client.close()
+                    
+def broadcast_user_list():
+    with clients_lock:
+        user_list = list(clients.values())
+        user_list_json = json.dumps({"type": "user_list", "users": user_list})
+        
+        for client in list(clients.keys()):
             try:
-                client.send(formatted_message.encode('utf-8'))
+                # Send user list update with newline
+                client.send(f"USER_LIST:{user_list_json}\n".encode('utf-8'))
             except:
-                clients.remove(client)
+                del clients[client]
                 client.close()
+
+def send_user_list(client_socket):
+    with clients_lock:
+        user_list = list(clients.values())
+        user_list_json = json.dumps({"type": "user_list", "users": user_list})
+        try:
+            client_socket.send(f"USER_LIST:{user_list_json}".encode('utf-8'))
+        except:
+            pass
 
 
 def handle_auth(client_socket):
