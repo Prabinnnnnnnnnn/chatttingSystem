@@ -110,38 +110,48 @@ def update_user_list(users):
         user_listbox.insert(tk.END, f"🟢 {user}")
 
 
+
+def display_chat_message(line):
+    def update():
+        text_area.config(state = 'normal')
+        text_area.insert(tk.END, line + "\n")
+        text_area.config(state='disabled')
+        text_area.yview(tk.END)
+    chat.after(0,update)
+
+
 # Function to receive messages
 def receive_messages():
+    buffer = ""
     while True:
         try:
-            message = client.recv(1024).decode('utf-8')
-            if not message:
+            data = client.recv(1024).decode('utf-8')
+            if not data:
                 break
             
-            # Split multiple messages if they come together
-            lines = message.strip().split('\n')
-            
-            for line in lines:
+            buffer += data
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                line = line.strip()
                 if not line:
                     continue
-                    
+                
                 if line.startswith("USER_LIST:"):
                     try:
-                        user_data = json.loads(line[10:])  # Remove "USER_LIST:" prefix
+                        user_data = json.loads(line[10:])
+                       
                         if user_data["type"] == "user_list":
                             update_user_list(user_data["users"])
-                    except json.JSONDecodeError:
-                        pass  # Skip malformed JSON
+                    except json.JSONDecodeError as e:
+                        print(f"[ERROR] JSON decode error: {e}")
                 else:
-                    # Regular chat message - display it
-                    text_area.config(state='normal')
-                    text_area.insert(tk.END, line + "\n")
-                    text_area.config(state='disabled')
-                    text_area.yview(tk.END)
-                    
+                    display_chat_message(line)
+
         except Exception as e:
             print(f"Error receiving message: {e}")
             break
+
+
 # Start client
 auth()
 threading.Thread(target=receive_messages, daemon=True).start()
