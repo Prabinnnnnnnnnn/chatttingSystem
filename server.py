@@ -104,6 +104,25 @@ def send_user_list(client_socket):
         except:
             pass
 
+# Retrieve old messages to the chat
+
+def send_old_messages(client_socket, username):
+    try:
+        cursor.execute("SELECT timestamp, message FROM messages WHERE username = ? ORDER BY id ASC", (username,))
+        rows = cursor.fetchall()
+        if rows:
+            client_socket.send("\nPrevious Messages:\n".encode())
+            for row in rows:
+                timestamp = row[0]
+                message = row[1]
+                formatted = f"[{timestamp}] {username}: {message}"
+                client_socket.send((formatted + "\n").encode())
+        else:
+            client_socket.send("No previous messages.\n".encode())
+    except Exception as e:
+        print("Error sending old messages:", e)
+        client_socket.send("Error loading previous messages.\n".encode())
+
 
 def handle_auth(client_socket):
     try:
@@ -127,6 +146,8 @@ def handle_auth(client_socket):
             cursor.execute("SELECT * FROM users WHERE username =? AND password =?",(username,password))
             if cursor.fetchone():
                 client_socket.send(f"✅ Logged in as {username}".encode())
+
+                send_old_messages(client_socket, username)
                 return username
             else:
                 client_socket.send("Invalid credentials".encode())
