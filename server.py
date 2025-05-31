@@ -57,6 +57,22 @@ def handle_client(client_socket, addr):
     broadcast_user_list()
 
 def broadcast_message(message, exclude_client=None):
+
+    try:
+        if message.startswith("[") and ":" in message:
+            parts = message.split("] ", 1)
+            if len(parts) == 2:
+                timestamp = parts[0][1:]
+                user_and_text = parts[1].split(": ",1)
+                username = user_and_text[0].strip()
+                text = user_and_text[1].strip()
+                print("Messages are being saved")
+
+                cursor.execute("INSERT INTO messages (username, timestamp, message) VALUES(?,?,?) ",(username, timestamp, text))
+                conn.commit()
+    except Exception as e:
+        print("Error saving message to database", e)
+
     with clients_lock:
         for client in list(clients.keys()):
             if client != exclude_client:
