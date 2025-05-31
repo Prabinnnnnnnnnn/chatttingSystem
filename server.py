@@ -24,37 +24,105 @@ clients_lock = threading.Lock()
 def handle_client(client_socket, addr):
     username = handle_auth(client_socket)
     if not username:
-        client_socket.close()
+        try:
+            client_socket.close()
+        except:
+            pass
         return
+
     with clients_lock:
-         clients[client_socket] = username
+        clients[client_socket] = username
     print(f"[+] New connection from {addr}")
-    
+
     broadcast_message(f"🟢 {username} joined the chat", exclude_client=client_socket)
     broadcast_user_list()
 
     while True:
         try:
             message = client_socket.recv(1024).decode('utf-8')
-            if not message or message.strip() == "/quit": 
+            if not message:
+                break
+
+            if message.strip() == "/quit":
+                # Client requested to quit, break loop to close connection
                 break
 
             if message.strip() == "/users":
+                # Optionally handle /users command if you want to list users here
                 continue
 
+            if message.startswith("/pm "):
+                try:
+                    _, rest = message.split(" ", 1)
+                    recipient_name, private_msg = rest.strip().split(" ", 1)
+                    found = False
+                    with clients_lock:
+                        for client, uname in clients.items():
+                            if uname == recipient_name:
+                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                formatted = f"[{timestamp}] (Private) {username} to {recipient_name}: {private_msg}"
+
+                                # Send private message safely
+                                try:
+                                    client.send((formatted + "\n").encode())
+                                except Exception as e:
+                                    print(f"Error sending PM to {recipient_name}: {e}")
+
+                                # Echo back to sender safely
+                                try:
+                                    client_socket.send((formatted + "\n").encode())
+                                except Exception as e:
+                                    print(f"Error sending PM echo to sender {username}: {e}")
+
+                                # Save message in DB safely
+                                try:
+                                    cursor.execute(
+                                        "INSERT INTO messages (username, recipient, timestamp, message) VALUES (?, ?, ?, ?)",
+                                        (username, recipient_name, timestamp, private_msg)
+                                    )
+                                    conn.commit()
+                                except Exception as e:
+                                    print(f"Error saving PM to DB: {e}")
+
+                                found = True
+                                break
+
+                    if not found:
+                        try:
+                            client_socket.send(f"❌ User '{recipient_name}' not found or offline.\n".encode())
+                        except Exception as e:
+                            print(f"Error notifying sender user not found: {e}")
+
+                except ValueError:
+                    try:
+                        client_socket.send("❌ Invalid format. Use: /pm <username> <message>\n".encode())
+                    except Exception as e:
+                        print(f"Error sending invalid format message: {e}")
+                continue
+
+            # Normal broadcast message
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             formatted_message = f"[{timestamp}] {username}: {message}"
             print(f"[{addr}] {formatted_message}")
-            broadcast_message(formatted_message, exclude_client=None) 
-        except:
+            broadcast_message(formatted_message, exclude_client=None)
+
+        except Exception as e:
+            print(f"Error in client loop for {addr}: {e}")
             break
+
     print(f"[-] Connection closed from {addr}")
     with clients_lock:
         if client_socket in clients:
             del clients[client_socket]
-    client_socket.close()
+
+    try:
+        client_socket.close()
+    except:
+        pass
+
     broadcast_message(f"🔴 {username} left the chat")
     broadcast_user_list()
+
 
 def broadcast_message(message, exclude_client=None):
 
@@ -113,6 +181,7 @@ def send_old_messages(client_socket, username):
     except Exception as e:
         print("Error sending old messages:", e)
         client_socket.send("Error loading previous messages.\n".encode())
+
 
 
 def handle_auth(client_socket):

@@ -59,6 +59,18 @@ user_listbox = tk.Listbox(user_list_frame, yscrollcommand=user_scrollbar.set, fo
 user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 user_scrollbar.config(command=user_listbox.yview)
 
+# PM selection frame
+pm_frame = tk.Frame(user_frame)
+pm_frame.pack(pady=10)
+
+pm_label = tk.Label(pm_frame, text="Private Message To:")
+pm_label.pack()
+
+pm_target = tk.StringVar()
+pm_dropdown = tk.OptionMenu(pm_frame, pm_target, "")
+pm_dropdown.pack()
+
+
 
 # Authentication function
 def auth():
@@ -95,29 +107,44 @@ def auth():
 def send_message():
     message = input_area.get()
     if message:
-        if message.strip() == "/quit":
-            client.send("/quit".encode())
-            client.close()
-            chat.quit()
-            return
-        
-        client.send(message.encode())  # Just send raw message
-        input_area.delete(0, tk.END)   # Clear input field
+        target = pm_target.get()
+        if target and target != username:  # Don’t send to self
+            full_message = f"/pm {target} {message}"
+        else:
+            full_message = message
+
+        client.send(full_message.encode())
+        input_area.delete(0, tk.END)
+
 
 def update_user_list(users):
     user_listbox.delete(0, tk.END)
+    
+    menu = pm_dropdown["menu"]
+    menu.delete(0, "end")
+
     for user in users:
         user_listbox.insert(tk.END, f"🟢 {user}")
+        menu.add_command(label=user, command=lambda value=user: pm_target.set(value))
 
 
 
 def display_chat_message(line):
     def update():
-        text_area.config(state = 'normal')
-        text_area.insert(tk.END, line + "\n")
+        text_area.config(state='normal')
+
+        if "(Private)" in line:
+            text_area.insert(tk.END, "🔒 " + line + "\n", "pm")
+        else:
+            text_area.insert(tk.END, line + "\n")
+
         text_area.config(state='disabled')
         text_area.yview(tk.END)
-    chat.after(0,update)
+        text_area.tag_config("pm", foreground="blue", font=("Arial", 10, "italic"))
+
+
+    chat.after(0, update)
+
 
 
 # Function to receive messages
@@ -127,7 +154,8 @@ def receive_messages():
         try:
             data = client.recv(1024).decode('utf-8')
             if not data:
-                break
+                print("[*] Server closed connection.")
+                break  # Exit loop if server closed socket
             
             buffer += data
             while '\n' in buffer:
@@ -139,7 +167,6 @@ def receive_messages():
                 if line.startswith("USER_LIST:"):
                     try:
                         user_data = json.loads(line[10:])
-                       
                         if user_data["type"] == "user_list":
                             update_user_list(user_data["users"])
                     except json.JSONDecodeError as e:
@@ -150,12 +177,28 @@ def receive_messages():
         except Exception as e:
             print(f"Error receiving message: {e}")
             break
+    # When loop breaks, close GUI safely
+    chat.after(0, on_close)
+
 
 
 # Start client
 auth()
 threading.Thread(target=receive_messages, daemon=True).start()
-chat.protocol("WM_DELETE_WINDOW", lambda: client.send("/quit".encode()) or client.close() or chat.destroy())
+def on_close():
+    try:
+        client.send("/quit".encode())  # Tell server you're quitting
+    except:
+        pass
+    try:
+        client.close()  # Close socket
+    except:
+        pass
+    chat.destroy()     # Close GUI
+    sys.exit()         # Exit program
+
+chat.protocol("WM_DELETE_WINDOW", on_close)
+
 def on_enter(event):
     send_message()
 
