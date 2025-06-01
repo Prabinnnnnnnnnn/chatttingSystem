@@ -18,6 +18,8 @@ server.bind(('0.0.0.0', 5555))
 server.listen()
 print("[*] Server listening on the port 5555 ....")
 
+
+
 clients = {}
 client_rooms = {}
 clients_lock = threading.Lock()
@@ -307,14 +309,22 @@ def handle_auth(client_socket):
             if cursor.fetchone():
                 client_socket.send("Username already exists".encode())
                 return None
-            cursor.execute("INSERT INTO users (username,password) VALUES (?,?)", (username, password))
+            cursor.execute("INSERT INTO users (username,password,banned) VALUES (?,?,0)", (username, password))
             conn.commit()
             client_socket.send(f"✅Registered as {username}".encode())
             return username
         
         elif action == 'login':
             cursor.execute("SELECT * FROM users WHERE username =? AND password =?",(username,password))
-            if cursor.fetchone():
+            user = cursor.fetchone()
+            if user:
+                # Check if banned
+                cursor.execute("SELECT banned FROM users WHERE username=?", (username,))
+                row = cursor.fetchone()
+                if row and row[0] == 1:
+                    client_socket.send("You are banned from this server.".encode())
+                    return None
+
                 client_socket.send(f"✅ Logged in as {username}".encode())
 
                 send_old_messages(client_socket, username)
@@ -333,11 +343,89 @@ def handle_auth(client_socket):
         except:
             pass
         return None
+
+def admin_panel():
+    while True:
+        cmd = input("Admin Panel > ").strip()
+        if cmd == "list users":
+            with clients_lock:
+                if clients:
+                    print("Active users:")
+                    for uname in clients.values():
+                        print(" -", uname)
+                else:
+                    print("No active users.")
+        
+        elif cmd == "list messages":
+            cursor.execute("SELECT timestamp, username, message FROM messages ORDER BY id DESC LIMIT 20")
+            rows = cursor.fetchall()
+            if rows:
+                print("Last 20 messages:")
+                for ts, user, msg in reversed(rows):
+                    print(f"[{ts}] {user}: {msg}")
+            else:
+                print("No messages found.")
+        
+        elif cmd.startswith("kick "):
+            username_to_kick = cmd.split(" ", 1)[1].strip()
+            with clients_lock:
+                kicked = False
+                for client, uname in list(clients.items()):
+                    if uname == username_to_kick:
+                        try:
+                            client.send("You have been kicked by the admin.".encode())
+                            client.close()
+                        except:
+                            pass
+                        del clients[client]
+                        if client in client_rooms:
+                            del client_rooms[client]
+                        print(f"Kicked user: {username_to_kick}")
+                        kicked = True
+                        break
+                if not kicked:
+                    print(f"User {username_to_kick} not found online.")
+        
+        elif cmd.startswith("ban "):
+            username_to_ban = cmd.split(" ", 1)[1].strip()
+            cursor.execute("UPDATE users SET banned=1 WHERE username=?", (username_to_ban,))
+            conn.commit()
+            print(f"Banned user: {username_to_ban}")
+
+            with clients_lock:
+                for client, uname in list(clients.items()):
+                    if uname == username_to_ban:
+                        try:
+                            client.send("You have been banned by the admin.".encode())
+                            client.close()
+                        except:
+                            pass
+                        del clients[client]
+                        if client in client_rooms:
+                            del client_rooms[client]
+                        break
+        
+        elif cmd in ("exit", "quit"):
+            print("Exiting admin panel...")
+            break
+        
+        else:
+            print("Unknown command. Available commands:")
+            print(" - list users")
+            print(" - list messages")
+            print(" - kick <username>")
+            print(" - ban <username>")
+            print(" - exit")
+
+    
+
             
 
 
 
 # Main Server Loop
+admin_thread = threading.Thread(target=admin_panel, daemon=True)
+admin_thread.start()
 
 running = True
 server.settimeout(1.0)  # Timeout every 1 second on accept()
