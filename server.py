@@ -19,7 +19,67 @@ server.listen()
 print("[*] Server listening on the port 5555 ....")
 
 clients = {}
+client_rooms = {}
 clients_lock = threading.Lock()
+
+def broadcast_room_user_list(room_name):
+    with clients_lock:
+        # Get users in the specified room
+        users_in_room = [uname for client, uname in clients.items() if client_rooms.get(client) == room_name]
+        user_list_json = json.dumps({"type": "room_user_list", "room": room_name, "users": users_in_room})
+
+        for client, uname in clients.items():
+            if client_rooms.get(client) == room_name:
+                try:
+                    client.send(f"ROOM_USER_LIST:{user_list_json}\n".encode('utf-8'))
+                except:
+                    del clients[client]
+                    client.close()
+
+
+def broadcast_room_message(room_name, message, exclude_client=None):
+    with clients_lock:
+        for client, uname in clients.items():
+            if client != exclude_client and client_rooms.get(client) == room_name:
+                try:
+                    client.send(f"{message}\n".encode('utf-8'))
+                except:
+                    del clients[client]
+                    client.close()
+
+
+def join_room(client_socket, username, room_name):
+    # Create room if not exists
+    cursor.execute("INSERT OR IGNORE INTO rooms (room_name) VALUES (?)", (room_name,))
+    conn.commit()
+
+    # Set client current room
+    client_rooms[client_socket] = room_name
+
+    # Notify user
+    client_socket.send(f"✅ You joined room '{room_name}'\n".encode())
+
+    # Broadcast to room that user joined
+    broadcast_room_message(room_name, f"🟢 {username} joined the room.", exclude_client=client_socket)
+    broadcast_room_user_list(room_name)
+
+def leave_room(client_socket, username):
+    room_name = client_rooms.get(client_socket)
+    if room_name:
+        broadcast_room_message(room_name, f"🔴 {username} left the room.", exclude_client=client_socket)
+        client_rooms[client_socket] = None
+        client_socket.send("✅ You left the room. You are now in global chat.\n".encode())
+
+        broadcast_room_user_list(room_name)
+
+def list_rooms(client_socket):
+    cursor.execute("SELECT room_name FROM rooms")
+    rooms = cursor.fetchall()
+    if rooms:
+        rooms_list = ', '.join([r[0] for r in rooms])
+        client_socket.send(f"Available rooms: {rooms_list}\n".encode())
+    else:
+        client_socket.send("No rooms available.\n".encode())
 
 def handle_client(client_socket, addr):
     username = handle_auth(client_socket)
@@ -37,20 +97,46 @@ def handle_client(client_socket, addr):
     broadcast_message(f"🟢 {username} joined the chat", exclude_client=client_socket)
     broadcast_user_list()
 
+    # Set default room as None or global chat
+    client_rooms[client_socket] = None
+
     while True:
         try:
             message = client_socket.recv(1024).decode('utf-8')
             if not message:
                 break
 
-            if message.strip() == "/quit":
-                # Client requested to quit, break loop to close connection
+            message = message.strip()
+
+            # Handle quit
+            if message == "/quit":
                 break
 
-            if message.strip() == "/users":
-                # Optionally handle /users command if you want to list users here
+            # Handle list users command (existing)
+            if message == "/users":
                 continue
 
+            # Room commands integration
+            if message.startswith("/join "):
+                room_name = message.split(" ", 1)[1].strip()
+                join_room(client_socket, username, room_name)
+                broadcast_room_user_list(room_name)
+                continue
+
+            elif message == "/leave":
+                leave_room(client_socket, username)
+                current_room = client_rooms.get(client_socket)
+                if current_room:
+                    broadcast_room_user_list(current_room)
+                else:
+                    broadcast_user_list()
+                continue
+
+            elif message == "/listrooms":
+                list_rooms(client_socket)
+                continue
+
+            # Private message (existing)
             if message.startswith("/pm "):
                 try:
                     _, rest = message.split(" ", 1)
@@ -62,19 +148,16 @@ def handle_client(client_socket, addr):
                                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 formatted = f"[{timestamp}] (Private) {username} to {recipient_name}: {private_msg}"
 
-                                # Send private message safely
                                 try:
                                     client.send((formatted + "\n").encode())
                                 except Exception as e:
                                     print(f"Error sending PM to {recipient_name}: {e}")
 
-                                # Echo back to sender safely
                                 try:
                                     client_socket.send((formatted + "\n").encode())
                                 except Exception as e:
                                     print(f"Error sending PM echo to sender {username}: {e}")
 
-                                # Save message in DB safely
                                 try:
                                     cursor.execute(
                                         "INSERT INTO messages (username, recipient, timestamp, message) VALUES (?, ?, ?, ?)",
@@ -100,11 +183,16 @@ def handle_client(client_socket, addr):
                         print(f"Error sending invalid format message: {e}")
                 continue
 
-            # Normal broadcast message
+            # Normal messages: broadcast based on room membership
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             formatted_message = f"[{timestamp}] {username}: {message}"
             print(f"[{addr}] {formatted_message}")
-            broadcast_message(formatted_message, exclude_client=None)
+
+            current_room = client_rooms.get(client_socket)
+            if current_room:
+                broadcast_room_message(current_room, formatted_message, exclude_client=None)
+            else:
+                broadcast_message(formatted_message, exclude_client=None)
 
         except Exception as e:
             print(f"Error in client loop for {addr}: {e}")
@@ -114,6 +202,11 @@ def handle_client(client_socket, addr):
     with clients_lock:
         if client_socket in clients:
             del clients[client_socket]
+        if client_socket in client_rooms:
+            room = client_rooms[client_socket]
+            if room:
+                broadcast_room_message(room, f"🔴 {username} left the room.", exclude_client=client_socket)
+            del client_rooms[client_socket]
 
     try:
         client_socket.close()
@@ -124,30 +217,47 @@ def handle_client(client_socket, addr):
     broadcast_user_list()
 
 
-def broadcast_message(message, exclude_client=None):
 
+
+def broadcast_message(message, room=None, exclude_client=None):
     try:
+        # Save messages only if they are normal chat messages with timestamp and username
         if message.startswith("[") and ":" in message:
             parts = message.split("] ", 1)
             if len(parts) == 2:
                 timestamp = parts[0][1:]
-                user_and_text = parts[1].split(": ",1)
-                username = user_and_text[0].strip()
-                text = user_and_text[1].strip()
-                
-                cursor.execute("INSERT INTO messages (username, timestamp, message) VALUES(?,?,?) ",(username, timestamp, text))
-                conn.commit()
+                user_and_text = parts[1].split(": ", 1)
+                if len(user_and_text) == 2:
+                    username = user_and_text[0].strip()
+                    text = user_and_text[1].strip()
+                    cursor.execute(
+                        "INSERT INTO messages (username, timestamp, message) VALUES (?, ?, ?)",
+                        (username, timestamp, text)
+                    )
+                    conn.commit()
     except Exception as e:
         print("Error saving message to database", e)
 
     with clients_lock:
         for client in list(clients.keys()):
+            if room:
+                if client_rooms.get(client) != room:
+                    continue
+
             if client != exclude_client:
                 try:
-                    client.send(f"{message}\n".encode('utf-8'))  # Ensure newline
-                except:
+                    client.send(f"{message}\n".encode('utf-8'))
+                except Exception as e:
+                    print(f"Error sending message to client: {e}")
                     del clients[client]
-                    client.close()
+                    if client in client_rooms:
+                        del client_rooms[client]
+                    try:
+                        client.close()
+                    except:
+                        pass
+
+
                     
 def broadcast_user_list():
     with clients_lock:

@@ -70,6 +70,44 @@ pm_target = tk.StringVar()
 pm_dropdown = tk.OptionMenu(pm_frame, pm_target, "")
 pm_dropdown.pack()
 
+# --- ROOM CONTROLS ---
+
+room_frame = tk.Frame(main_frame)
+room_frame.pack(fill=tk.X, pady=(5, 10))
+
+room_label = tk.Label(room_frame, text="Chat Rooms", font=("Arial", 10, "bold"))
+room_label.pack(side=tk.LEFT)
+
+room_entry = tk.Entry(room_frame, width=20)
+room_entry.pack(side=tk.LEFT, padx=(5, 5))
+
+join_room_btn = tk.Button(room_frame, text="Join Room", command=lambda: join_room())
+join_room_btn.pack(side=tk.LEFT)
+
+leave_room_btn = tk.Button(room_frame, text="Leave Room", command=lambda: leave_room())
+leave_room_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+list_rooms_btn = tk.Button(room_frame, text="List Rooms", command=lambda: list_rooms())
+list_rooms_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+current_room_var = tk.StringVar(value="Global")
+current_room_label = tk.Label(room_frame, textvariable=current_room_var, fg="blue")
+current_room_label.pack(side=tk.LEFT, padx=(10, 0))
+
+def join_room():
+    room = room_entry.get().strip()
+    if room:
+        client.send(f"/join {room}".encode())
+        current_room_var.set(f"Room: {room}")
+
+def leave_room():
+    client.send("/leave".encode())
+    current_room_var.set("Global")
+
+def list_rooms():
+    client.send("/list_rooms".encode())
+
+
 
 
 # Authentication function
@@ -105,16 +143,18 @@ def auth():
 
 # Function to send messages
 def send_message():
-    message = input_area.get()
+    message = input_area.get().strip()
     if message:
         target = pm_target.get()
-        if target and target != username:  # Don’t send to self
+        if target and target != username:  # private message
             full_message = f"/pm {target} {message}"
         else:
+            # Regular message goes to current room on server side
             full_message = message
 
         client.send(full_message.encode())
         input_area.delete(0, tk.END)
+
 
 
 def update_user_list(users):
@@ -133,17 +173,23 @@ def display_chat_message(line):
     def update():
         text_area.config(state='normal')
 
-        if "(Private)" in line:
+        if "joined the room" in line:
+            text_area.insert(tk.END, "🟢 " + line + "\n", "joinleave")
+        elif "left the room" in line:
+            text_area.insert(tk.END, "🔴 " + line + "\n", "joinleave")
+        elif "(Private)" in line:
             text_area.insert(tk.END, "🔒 " + line + "\n", "pm")
         else:
             text_area.insert(tk.END, line + "\n")
 
         text_area.config(state='disabled')
         text_area.yview(tk.END)
-        text_area.tag_config("pm", foreground="blue", font=("Arial", 10, "italic"))
 
+        text_area.tag_config("pm", foreground="blue", font=("Arial", 10, "italic"))
+        text_area.tag_config("joinleave", foreground="green", font=("Arial", 10, "bold"))
 
     chat.after(0, update)
+
 
 
 
