@@ -392,6 +392,20 @@ def admin_panel():
             conn.commit()
             print(f"Banned user: {username_to_ban}")
 
+
+        elif cmd.startswith("unban "):
+            username_to_unban =  cmd.split(" ",1)[1].strip()
+            cursor.execute("UPDATE users SET banned = 0 WHERE username=?",(username_to_unban,))
+            conn.commit()
+            print(f"Unbanned user: {username_to_unban}")
+        
+        elif cmd.startswith("broadcast "):
+            admin_msg = cmd.split(" ",1)[1].strip()
+            message = f"[ADMIN ANNOUNCEMENT]: {admin_msg}"
+            broadcast_message(message)
+            print("Announcement made.")
+
+
             with clients_lock:
                 for client, uname in list(clients.items()):
                     if uname == username_to_ban:
@@ -400,7 +414,7 @@ def admin_panel():
                             client.close()
                         except:
                             pass
-                        del clients[client]
+                        del clients[client] 
                         if client in client_rooms:
                             del client_rooms[client]
                         break
@@ -413,6 +427,8 @@ def admin_panel():
             print("Unknown command. Available commands:")
             print(" - list users")
             print(" - list messages")
+            print(" - unban username")
+            print(" - broadcast message")
             print(" - kick <username>")
             print(" - ban <username>")
             print(" - exit")
