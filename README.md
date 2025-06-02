@@ -26,23 +26,18 @@ A full-featured socket-based chat system built with Python, supporting user regi
 - 📢 Broadcast system-wide messages
 - 🧠 View recent messages and connected users
 
----
 
-## 🖼️ GUI Preview
-
-> 📷 _Add a screenshot of your client UI here!_
-
----
 
 ## 📂 Project Structure
+```
 chat-app/
-├── client.py # GUI client application
-├── server.py # Main server-side logic
-├── init_db.py # Initializes the SQLite database
-├── users.db # SQLite database (auto-generated)
-└── README.md # Project documentation
+├── client.py       # GUI client application
+├── server.py       # Main server-side logic
+├── init_db.py      # Initializes the SQLite database
+├── users.db        # SQLite database (auto-generated)
+└── README.md       # Project documentation
 
----
+```
 
 ## ⚙️ Getting Started
 
