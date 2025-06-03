@@ -14,7 +14,7 @@ cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
         password TEXT NOT NULL,
-        role TEXT DEFAULT 'user', is_admin INTEGER DEFAULT 0, banned INTEGER DEFAULT 0)
+        role TEXT DEFAULT 'user', is_admin INTEGER DEFAULT 0, banned INTEGER DEFAULT 0
     )
 ''')
 
